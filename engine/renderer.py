@@ -15,6 +15,7 @@ from engine.assets import LAYER_WIDTH, Assets
 from engine.camera import Camera
 from level import tiles
 from level.level import Level
+from physics.body import Body
 
 if TYPE_CHECKING:
     from engine.world import World
@@ -28,6 +29,18 @@ PLAYER_ANIMATIONS = {"idle": "idle", "run": "run", "jump": "jump", "fall": "fall
 
 #: Колко кадъра в секунда има анимацията на всеки враг.
 ENEMY_FRAME_RATES = {"walker": 6, "flyer": 12, "boss": 6}
+
+
+#: Цветовете, през които преминава героят с Комета.
+STAR_TINTS = ((90, 40, 0), (0, 60, 90), (80, 0, 80), (60, 80, 0))
+
+
+def bump_lift(timer: float) -> int:
+    """Колко пиксела нагоре е ударен блок (дъга от синус за BLOCK_BUMP_TIME)."""
+    if timer <= 0:
+        return 0
+    progress = 1 - timer / config.BLOCK_BUMP_TIME
+    return round(config.BLOCK_BUMP_HEIGHT * math.sin(math.pi * progress))
 
 
 def blink_visible(timer: float) -> bool:
@@ -52,8 +65,16 @@ class Renderer:
         offset = camera.offset
         frame = int(world.time * config.ANIMATION_FPS)
         self.draw_background(surface, world.level.meta.background, camera)
-        self.draw_tiles(surface, world.level, offset, frame)
+        for item in world.powerups:
+            if item.emerging:   # рисува се ПРЕДИ тайловете → изглежда, че излиза от блока
+                self.draw_item(surface, item.kind, item.body, offset, frame)
+        self.draw_tiles(surface, world.level, offset, frame, world.block_bumps)
         self.draw_markers(surface, world, offset, frame)
+        for pickup in (*world.coins, *world.crystals):
+            self.draw_item(surface, pickup.kind, pickup.body, offset, frame)
+        for item in world.powerups:
+            if not item.emerging:
+                self.draw_item(surface, item.kind, item.body, offset, frame)
         for enemy in world.enemies:
             self.draw_enemy(surface, enemy, offset)
         self.draw_player(surface, world.player, offset)
@@ -83,8 +104,9 @@ class Renderer:
 
     # --- тайлове -----------------------------------------------------------
     def draw_tiles(self, surface: pygame.Surface, level: Level, offset: tuple[int, int],
-                   frame: int) -> None:
-        """Рисува само тайловете, които попадат в екрана."""
+                   frame: int, bumps: dict[tuple[int, int], float] | None = None) -> None:
+        """Рисува само тайловете, които попадат в екрана; ударените блокове подскачат."""
+        bumps = bumps or {}
         size = config.TILE_SIZE
         off_x, off_y = offset
         first_col, first_row = max(0, off_x // size), max(0, off_y // size)
@@ -100,7 +122,8 @@ class Renderer:
                 top_exposed = above != symbol and not level.tile_at(col, row - 1).solid
                 sprite = self.assets.tile(symbol, background, top_exposed, frame, col)
                 if sprite is not None:
-                    surface.blit(sprite, (col * size - off_x, row * size - off_y))
+                    lift = bump_lift(bumps.get((col, row), 0.0))
+                    surface.blit(sprite, (col * size - off_x, row * size - off_y - lift))
 
     # --- обекти ------------------------------------------------------------
     def blit_entity(self, surface: pygame.Surface, sprite: pygame.Surface,
@@ -108,6 +131,14 @@ class Renderer:
         """Поставя спрайт така, че долният му среден край да е на `midbottom`."""
         rect = sprite.get_rect(midbottom=(round(midbottom[0]) - offset[0],
                                           round(midbottom[1]) - offset[1]))
+        surface.blit(sprite, rect)
+
+    def draw_item(self, surface: pygame.Surface, kind: str, body: Body,
+                  offset: tuple[int, int], frame: int) -> None:
+        """Монета, кристал или power-up (центриран върху хитбокса)."""
+        sprite = self.assets.item(kind, frame)
+        rect = sprite.get_rect(center=(round(body.center_x) - offset[0],
+                                       round(body.center_y) - offset[1]))
         surface.blit(sprite, rect)
 
     def draw_markers(self, surface: pygame.Surface, world: World, offset: tuple[int, int],
@@ -144,6 +175,10 @@ class Renderer:
         frame = int(player.anim_time * config.ANIMATION_FPS * (speed_factor if anim == "run"
                                                                else 0.6))
         sprite = self.assets.player(player.form, anim, frame, player.facing)
+        if player.star_timer > 0:
+            sprite = sprite.copy()
+            tint = STAR_TINTS[int(player.anim_time * 12) % len(STAR_TINTS)]
+            sprite.fill(tint, special_flags=pygame.BLEND_RGB_ADD)
         self.blit_entity(surface, sprite, (body.center_x, body.bottom + 1), offset)
 
     # --- debug -------------------------------------------------------------

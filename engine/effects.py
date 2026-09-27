@@ -20,7 +20,8 @@ SPARK_COLORS: dict[str, Color] = {
     "coin": (255, 220, 90), "crystal": (150, 230, 255), "checkpoint": (255, 200, 80),
     "hurt": (255, 90, 90), "fireball_pop": (160, 200, 255), "jump": (230, 220, 200),
     "powerup": (255, 160, 60), "level_complete": (255, 250, 200), "enemy_stomp": (220, 220, 210),
-    "break": (180, 110, 70), "boss_hit": (230, 120, 255),
+    "break": (180, 110, 70), "boss_hit": (230, 120, 255), "oneup": (120, 255, 140),
+    "star": (255, 250, 200), "bump": (240, 230, 200),
 }
 
 
@@ -61,6 +62,16 @@ class SpriteEffect:
     squashed: bool
 
 
+@dataclass
+class CoinPop:
+    """Монета, изскочила от блок: литва нагоре и изчезва."""
+
+    x: float
+    y: float
+    vy: float = -config.COIN_POP_VELOCITY
+    life: float = config.COIN_POP_TIME
+
+
 class Effects:
     """Всички активни ефекти и тяхното обновяване/рисуване."""
 
@@ -68,6 +79,7 @@ class Effects:
         self.particles: list[Particle] = []
         self.texts: list[FloatingText] = []
         self.sprites: list[SpriteEffect] = []
+        self.coin_pops: list[CoinPop] = []
         self._rng = random.Random(7)
 
     def burst(self, x: float, y: float, color: Color, count: int = 8, speed: float = 160.0,
@@ -83,7 +95,9 @@ class Effects:
 
     def on_event(self, kind: str, x: float, y: float, data: str) -> None:
         """Създава подходящ ефект за събитие от света."""
-        if kind == "points":
+        if kind == "coin_pop":
+            self.coin_pops.append(CoinPop(x, y - config.TILE_SIZE / 2))
+        elif kind == "points":
             self.texts.append(FloatingText(x, y, f"+{data}"))
         elif kind in ("enemy_stomp", "enemy_fireball", "enemy_star"):
             enemy_kind, facing = data.split(":")
@@ -115,6 +129,11 @@ class Effects:
                 sprite.vy += config.GRAVITY * dt
                 sprite.y += sprite.vy * dt
             sprite.life -= dt
+        for pop in self.coin_pops:
+            pop.vy += config.GRAVITY * dt
+            pop.y += pop.vy * dt
+            pop.life -= dt
+        self.coin_pops = [pop for pop in self.coin_pops if pop.life > 0]
         self.particles = [p for p in self.particles if p.life > 0]
         self.texts = [t for t in self.texts if t.life > 0]
         self.sprites = [s for s in self.sprites if s.life > 0]
@@ -131,6 +150,9 @@ class Effects:
             else:
                 image = pygame.transform.flip(image, False, True)
             surface.blit(image, image.get_rect(center=(sprite.x - off_x, sprite.y - off_y + 6)))
+        for pop in self.coin_pops:
+            image = assets.item("coin", int(pop.life * 30))
+            surface.blit(image, image.get_rect(center=(pop.x - off_x, pop.y - off_y)))
         for particle in self.particles:
             alpha = max(0.0, min(1.0, particle.life / config.PARTICLE_LIFETIME))
             color = tuple(round(c * (0.4 + 0.6 * alpha)) for c in particle.color)

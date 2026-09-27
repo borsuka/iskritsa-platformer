@@ -18,11 +18,13 @@ from dataclasses import dataclass
 import config
 from engine.input import PlayerInput
 from engine.session import Session
+from entities.collectibles import Coin, Crystal, PowerUp
 from entities.enemies import ENEMY_CLASSES, Enemy, create_enemy
 from entities.hazards import fell_into_pit, touching_hazard
 from entities.markers import Checkpoint, ExitPortal
 from entities.player import Player
 from entities.projectiles import EnemyProjectile, Fireball
+from level import tiles
 from level.level import Level, Spawn
 from physics.body import Body
 from physics.collision import StandSurface
@@ -70,6 +72,12 @@ class World:
         self.enemy_projectiles: list[EnemyProjectile] = []
         self.fireballs: list[Fireball] = []
         self.platforms: list[StandSurface] = []
+        self.coins = [Coin(spawn) for spawn in level.spawns_of("coin")]
+        self.crystals = [Crystal(spawn, index)
+                         for index, spawn in enumerate(level.spawns_of("crystal"))
+                         if index not in self.session.crystals]
+        self.powerups: list[PowerUp] = []
+        self.block_bumps: dict[tuple[int, int], float] = {}
         self.checkpoints = [Checkpoint(spawn) for spawn in level.spawns_of("checkpoint")]
         for checkpoint in self.checkpoints:
             checkpoint.activated = respawn is not None and checkpoint.spawn == respawn
@@ -103,7 +111,8 @@ class World:
         """Всички хитбоксове – за debug режима."""
         bodies = [self.player.body, self.exit.body]
         bodies += [entity.body for entity in (*self.enemies, *self.enemy_projectiles,
-                                               *self.fireballs, *self.checkpoints)]
+                                               *self.fireballs, *self.checkpoints, *self.coins,
+                                               *self.crystals, *self.powerups)]
         return bodies
 
     # --- основна стъпка ----------------------------------------------------
@@ -113,10 +122,14 @@ class World:
             return
         self.time += dt
         self._tick_timer(dt)
+        self._tick_block_bumps(dt)
         self.player.update_with_input(dt, inp, self)
-        for entity in (*self.enemies, *self.enemy_projectiles, *self.fireballs):
+        if self.player.last_collision.hit_ceiling and not self.player.is_dead:
+            self._hit_block_from_below()
+        for entity in (*self.enemies, *self.enemy_projectiles, *self.fireballs, *self.powerups):
             entity.update(dt, self)
         if not self.player.is_dead:
+            self._collect_items()
             self._player_vs_enemies(inp)
             self._projectiles_vs_targets()
             self._check_hazards()
@@ -173,6 +186,86 @@ class World:
                     if enemy.fireball_vulnerable:
                         enemy.defeat(self, "fireball")
 
+    # --- блокове -------------------------------------------------------------
+    def _tick_block_bumps(self, dt: float) -> None:
+        """Анимацията „подскачащ блок“ изтича."""
+        self.block_bumps = {cell: timer - dt for cell, timer in self.block_bumps.items()
+                            if timer - dt > 0}
+
+    def _hit_block_from_below(self) -> None:
+        """Героят удря таван: засяга се блокът, най-близо до центъра на главата."""
+        size = config.TILE_SIZE
+        cells = self.player.last_collision.ceiling_cells
+        col, row = min(cells, key=lambda cell: abs((cell[0] + 0.5) * size
+                                                    - self.player.body.center_x))
+        self.bump_block(col, row)
+
+    def bump_block(self, col: int, row: int) -> None:
+        """Удар отдолу: блок с изненада пуска съдържание, чуплив блок се чупи (голям герой)."""
+        symbol = self.level.symbol_at(col, row)
+        tile = self.level.tile_at(col, row)
+        center_x, top = (col + 0.5) * config.TILE_SIZE, row * config.TILE_SIZE
+        if tile.bumpable:
+            self.level.set_tile(col, row, tiles.USED_BLOCK)
+            self._release_content(tiles.SURPRISE_CONTENTS[symbol], col, row)
+        elif tile.breakable and self.player.is_big:
+            self.level.set_tile(col, row, tiles.EMPTY)
+            self.add_points(config.POINTS["brick"], center_x, top)
+            self.emit("break", center_x, top + config.TILE_SIZE / 2)
+            return
+        self.block_bumps[(col, row)] = config.BLOCK_BUMP_TIME
+        self.emit("bump", center_x, top)
+        self._defeat_enemies_on_block(col, row)
+
+    def _release_content(self, content: str, col: int, row: int) -> None:
+        """Съдържанието на блок с изненада: монета веднага или power-up, който излиза."""
+        if content == "coin":
+            self._give_coin((col + 0.5) * config.TILE_SIZE, row * config.TILE_SIZE)
+            self.emit("coin_pop", (col + 0.5) * config.TILE_SIZE, row * config.TILE_SIZE)
+            return
+        if content == "powerup" and self.player.is_big:
+            content = "flame"   # голямата форма получава следващото ниво сила
+        direction = 1 if self.player.body.center_x <= (col + 0.5) * config.TILE_SIZE else -1
+        self.powerups.append(PowerUp(content, col, row, direction))
+        self.emit("powerup_appear", (col + 0.5) * config.TILE_SIZE, row * config.TILE_SIZE)
+
+    def _defeat_enemies_on_block(self, col: int, row: int) -> None:
+        """Враг, стоящ върху ударения блок, отлита (класически трик)."""
+        left, right, top = col * config.TILE_SIZE, (col + 1) * config.TILE_SIZE, row * config.TILE_SIZE
+        for enemy in self.enemies:
+            body = enemy.body
+            if body.left < right and body.right > left and abs(body.bottom - top) < 2:
+                enemy.defeat(self, "fireball")
+
+    # --- предмети ------------------------------------------------------------
+    def _give_coin(self, x: float, y: float) -> None:
+        """Добавя монета; на всеки 100 – живот."""
+        if self.session.add_coin():
+            self.emit("oneup", x, y)
+        self.emit("coin", x, y)
+
+    def _collect_items(self) -> None:
+        """Събиране на монети, кристали и power-up-и при допир."""
+        player = self.player
+        for coin in self.coins:
+            if coin.body.overlaps(player.body):
+                coin.kill()
+                self._give_coin(coin.body.center_x, coin.body.center_y)
+        for crystal in self.crystals:
+            if crystal.body.overlaps(player.body):
+                crystal.kill()
+                self.session.crystals.add(crystal.index)
+                self.add_points(config.POINTS["crystal"], crystal.body.center_x, crystal.body.top)
+                self.emit("crystal", crystal.body.center_x, crystal.body.center_y)
+        for item in self.powerups:
+            if not item.emerging and item.body.overlaps(player.body):
+                item.kill()
+                if item.kind == "life":
+                    self.session.lives += 1
+                    self.emit("oneup", item.body.center_x, item.body.top)
+                else:
+                    player.collect_powerup(item.kind, self)
+
     def _check_hazards(self) -> None:
         """Шипове нараняват, лава и пропаст убиват моментално."""
         player = self.player
@@ -215,3 +308,6 @@ class World:
         self.enemies = [enemy for enemy in self.enemies if enemy.alive]
         self.enemy_projectiles = [shot for shot in self.enemy_projectiles if shot.alive]
         self.fireballs = [shot for shot in self.fireballs if shot.alive]
+        self.coins = [coin for coin in self.coins if coin.alive]
+        self.crystals = [crystal for crystal in self.crystals if crystal.alive]
+        self.powerups = [item for item in self.powerups if item.alive]

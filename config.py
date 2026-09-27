@@ -85,8 +85,9 @@ STAR_DURATION = 8.0             # s неуязвимост от „Комета�
 # Снаряди
 # ---------------------------------------------------------------------------
 FIREBALL_SPEED = 420.0
-FIREBALL_BOUNCE_VELOCITY = 330.0
-FIREBALL_GRAVITY = 1800.0
+FIREBALL_BOUNCE_VELOCITY = 250.0  # връх ≈ v²/(2g) ≈ 16 px – ниско, за да уцелва враговете
+FIREBALL_GRAVITY = 2000.0
+FIREBALL_SPAWN_DROP = 0.2       # дял от височината на героя под центъра
 FIREBALL_LIFETIME = 2.5
 FIREBALL_SIZE = 12
 MAX_PLAYER_FIREBALLS = 2

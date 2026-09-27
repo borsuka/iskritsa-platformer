@@ -12,8 +12,10 @@ from engine.input import PlayerInput
 from entities.entity import Entity
 from entities.player_states import DeadState, HurtState, IdleState, PlayerState
 from level.level import Spawn
+from entities.projectiles import Fireball
 from physics.collision import CollisionResult, move_body
 from physics.kinematics import approach, gravity_step
+from physics.tilemap_query import tiles_in_rect
 
 if TYPE_CHECKING:
     from engine.world import World
@@ -42,6 +44,7 @@ class Player(Entity):
         self.star_timer = 0.0
         self.previous_bottom = self.body.bottom
         self.death_cause = ""
+        self.pending_form: str | None = None
         self.last_collision = CollisionResult()
 
     @classmethod
@@ -65,7 +68,9 @@ class Player(Entity):
         if self.state.controllable:
             self._apply_horizontal_input(inp, dt)
             self._handle_jump(inp, dt, world)
+            self._handle_shoot(inp, world)
         self._move(dt, world)
+        self._apply_pending_form(world)
         self._update_state()
 
     @property
@@ -174,6 +179,7 @@ class Player(Entity):
         if not self.is_big:
             self.die(world, "enemy")
             return
+        self.pending_form = None
         self.set_form("small")
         self.invulnerable_timer = config.INVULNERABILITY_TIME
         direction = 1 if self.body.center_x >= source_x else -1
@@ -209,3 +215,48 @@ class Player(Entity):
         self.form = form
         height = config.PLAYER_SMALL_HEIGHT if form == "small" else config.PLAYER_BIG_HEIGHT
         self.body.resize_keep_feet(config.PLAYER_WIDTH, height)
+
+    # --- power-up-и ----------------------------------------------------------
+    def collect_powerup(self, kind: str, world: World) -> None:
+        """Прилага ефекта на събран power-up.
+
+        Args:
+            kind: "powerup" (Жарава → голяма), "flame" (Пламък) или "comet" (Комета).
+            world: светът (за събития и точки).
+        """
+        if kind == "comet":
+            self.star_timer = config.STAR_DURATION
+            world.emit("star", self.body.center_x, self.body.center_y)
+            return
+        target = "big" if kind == "powerup" else "flame"
+        if self.form == "flame" and target == "big":
+            target = "flame"   # Жаравата не отнема вече придобития Пламък
+        if not self.is_big:
+            self.pending_form = target   # растежът изчаква място над главата
+        else:
+            self.set_form(target)
+        world.add_points(config.POINTS["powerup"], self.body.center_x, self.body.top)
+        world.emit("powerup", self.body.center_x, self.body.center_y)
+
+    def _apply_pending_form(self, world: World) -> None:
+        """Пораства, щом над главата има достатъчно място (иначе би влязъл в тавана)."""
+        if self.pending_form is None:
+            return
+        body = self.body
+        new_top = body.bottom - config.PLAYER_BIG_HEIGHT
+        blocked = any(tile.solid for _c, _r, tile in tiles_in_rect(
+            world.level, body.left, new_top, body.right, body.bottom))
+        if not blocked:
+            self.set_form(self.pending_form)
+            self.pending_form = None
+
+    def _handle_shoot(self, inp: PlayerInput, world: World) -> None:
+        """Във форма „Пламък“ изстрелва искров заряд (най-много 2 едновременно)."""
+        if not inp.shoot_pressed or self.form != "flame":
+            return
+        if len(world.fireballs) >= config.MAX_PLAYER_FIREBALLS:
+            return
+        x = self.body.center_x + self.facing * self.body.width / 2
+        y = self.body.center_y + self.body.height * config.FIREBALL_SPAWN_DROP
+        world.fireballs.append(Fireball(x, y, self.facing))
+        world.emit("shoot", x, y)
