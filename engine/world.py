@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from engine.input import PlayerInput
 from entities.player import Player
 from level.level import Level
+from physics.body import Body
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,10 @@ class World:
         """Връща и изчиства натрупаните събития."""
         events, self.events = self.events, []
         return events
+
+    def debug_bodies(self) -> list[Body]:
+        """Всички хитбоксове – за debug режима."""
+        return [self.player.body]
 
     def update(self, dt: float, inp: PlayerInput) -> None:
         """Една логическа стъпка на целия свят."""

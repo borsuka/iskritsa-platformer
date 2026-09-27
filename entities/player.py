@@ -31,6 +31,7 @@ class Player(Entity):
 
     def __init__(self, x: float, y: float) -> None:
         super().__init__(x, y, config.PLAYER_WIDTH, config.PLAYER_SMALL_HEIGHT)
+        self.form = "small"
         self.state: PlayerState = IdleState()
         self.state_time = 0.0
         self.coyote_timer = 0.0

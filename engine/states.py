@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pygame
 
 import config
-from engine.renderer import draw_tiles
+from engine.camera import Camera
 from engine.world import World
 from level.parser import load_level
 from level.validator import ensure_valid
@@ -122,7 +122,7 @@ class MainMenu(State):
 
 
 class Playing(State):
-    """Игра (версия от етап 3): светът с физиката на героя."""
+    """Игра (версия от етап 4): свят, камера и пълно рисуване."""
 
     def __init__(self, game: Game, level_path: str | None = None) -> None:
         super().__init__(game)
@@ -130,23 +130,25 @@ class Playing(State):
         level = load_level(path)
         ensure_valid(level)
         self.world = World(level)
+        self.camera = Camera(config.SCREEN_WIDTH, config.SCREEN_HEIGHT,
+                             level.pixel_width, level.pixel_height)
+        body = self.world.player.body
+        self.camera.snap_to(body.center_x, body.center_y)
 
     def update(self, dt: float) -> None:
-        """Една стъпка на света с текущия вход."""
-        if self.game.input.consume("pause"):
+        """Една стъпка на света и камерата с текущия вход."""
+        inp = self.game.input
+        if inp.consume("debug"):
+            self.game.debug = not self.game.debug
+        if inp.consume("pause"):
             self.game.states.change(MainMenu(self.game))
             return
-        self.world.update(dt, self.game.input.player_snapshot())
+        self.world.update(dt, inp.player_snapshot())
         self.world.drain_events()
+        body = self.world.player.body
+        self.camera.update(body.center_x, body.center_y, body.vx, dt)
 
     def draw(self, surface: pygame.Surface) -> None:
-        """Рисува тайловете и героя; изгледът просто центрира героя."""
-        level = self.world.level
-        body = self.world.player.body
-        surface.fill(config.PALETTES[level.meta.background]["sky_top"])
-        max_offset = max(0, level.pixel_width - config.SCREEN_WIDTH)
-        offset_x = min(max(0.0, body.center_x - config.SCREEN_WIDTH / 2), max_offset)
-        offset_y = max(0, level.pixel_height - config.SCREEN_HEIGHT)
-        draw_tiles(surface, level, offset_x, offset_y)
-        pygame.draw.rect(surface, config.HUD_ACCENT,
-                         body.rect().move(-round(offset_x), -round(offset_y)))
+        """Рисува света през камерата."""
+        self.game.renderer.draw(surface, self.world, self.camera, self.game.debug,
+                                self.game.clock.get_fps())

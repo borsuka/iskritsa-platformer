@@ -11,7 +11,9 @@ from __future__ import annotations
 import pygame
 
 import config
+from engine.assets import Assets
 from engine.input import InputHandler
+from engine.renderer import Renderer
 from engine.states import MainMenu, State, StateMachine
 from engine.timestep import FixedTimestep
 
@@ -30,6 +32,8 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 36)
         self.font_big = pygame.font.Font(None, 64)
+        self.assets = Assets()
+        self.renderer = Renderer(self.assets)
         self.input = InputHandler()
         self.input.resolve_keys()
         self.timestep = FixedTimestep()
