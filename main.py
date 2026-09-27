@@ -9,6 +9,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 from engine.game import Game  # noqa: E402  (след настройката на средата)
 from engine.states import Playing, new_session  # noqa: E402
+from level.validator import use_utf8_console  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +35,7 @@ def resolve_level(level_ids: list[str], wanted: str) -> str:
 
 def main() -> None:
     """Стартира играта."""
+    use_utf8_console()
     args = parse_args()
     game = Game(debug=args.debug)
     if args.level:

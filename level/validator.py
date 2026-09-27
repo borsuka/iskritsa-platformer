@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 
 import config
@@ -121,6 +122,13 @@ def _check_crystals(level: Level, report: ValidationReport) -> None:
             f"(очакват се {config.CRYSTALS_PER_LEVEL})")
 
 
+def use_utf8_console() -> None:
+    """Кирилицата в съобщенията не бива да срива старите Windows конзоли (cp1252)."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(paths: list[str]) -> int:
     """Инструмент за авторите на нива: `python -m level.validator levels/*.txt`.
 
@@ -129,6 +137,7 @@ def main(paths: list[str]) -> int:
     """
     from level.parser import LevelFormatError, find_level_files, load_level
 
+    use_utf8_console()
     files = paths or [str(path) for path in find_level_files()]
     all_ok = True
     for path in files:
@@ -147,6 +156,4 @@ def main(paths: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(main(sys.argv[1:]))
