@@ -7,11 +7,14 @@ from engine.states import Playing
 
 
 def test_game_runs_headless_with_scripted_input() -> None:
-    """Симулира 3 секунди ходене надясно и наляво с фиксирани кадри."""
+    """Симулира 4 секунди ходене, тичане и скачане с фиксирани кадри."""
     game = Game()
     game.start(Playing(game))
-    frames = int(3 / config.FIXED_DT)
+    frames = int(4 / config.FIXED_DT)
     for frame in range(frames):
-        game.input.set_held({"right"} if frame < frames // 2 else {"left", "run"})
+        held = {"right"} if frame < frames // 2 else {"left", "run"}
+        if frame % 50 < 20:
+            held.add("jump")
+        game.input.set_held(held)
         game.step_frame(config.FIXED_DT)
     assert game.logic_steps >= frames - 1
