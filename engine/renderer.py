@@ -5,6 +5,7 @@ Renderer-ът само ЧЕТЕ състоянието на света – ни�
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pygame
@@ -17,11 +18,21 @@ from level.level import Level
 
 if TYPE_CHECKING:
     from engine.world import World
+    from entities.enemies import Enemy
     from entities.player import Player
 
 #: Кое състояние на героя с коя анимация се рисува.
 PLAYER_ANIMATIONS = {"idle": "idle", "run": "run", "jump": "jump", "fall": "fall",
                      "hurt": "hurt", "dead": "dead"}
+
+
+#: Колко кадъра в секунда има анимацията на всеки враг.
+ENEMY_FRAME_RATES = {"walker": 6, "flyer": 12, "boss": 6}
+
+
+def blink_visible(timer: float) -> bool:
+    """При неуязвимост спрайтът мига: видим е половината от времето."""
+    return timer <= 0 or math.sin(timer * config.BLINK_FREQUENCY * math.pi * 2) >= 0
 
 
 class Renderer:
@@ -42,7 +53,14 @@ class Renderer:
         frame = int(world.time * config.ANIMATION_FPS)
         self.draw_background(surface, world.level.meta.background, camera)
         self.draw_tiles(surface, world.level, offset, frame)
+        self.draw_markers(surface, world, offset, frame)
+        for enemy in world.enemies:
+            self.draw_enemy(surface, enemy, offset)
         self.draw_player(surface, world.player, offset)
+        for projectile in (*world.enemy_projectiles, *world.fireballs):
+            sprite = self.assets.item(projectile.kind, int(projectile.anim_time * 12))
+            self.blit_entity(surface, sprite, (projectile.body.center_x,
+                                               projectile.body.bottom + 3), offset)
         if debug:
             self.draw_debug(surface, world, camera, fps)
 
@@ -92,9 +110,34 @@ class Renderer:
                                           round(midbottom[1]) - offset[1]))
         surface.blit(sprite, rect)
 
+    def draw_markers(self, surface: pygame.Surface, world: World, offset: tuple[int, int],
+                     frame: int) -> None:
+        """Изходът и чекпойнтите."""
+        portal = world.exit
+        sprite = self.assets.exit_portal(portal.is_open, frame)
+        self.blit_entity(surface, sprite, (portal.body.center_x, portal.body.bottom), offset)
+        for checkpoint in world.checkpoints:
+            sprite = self.assets.checkpoint(checkpoint.activated)
+            self.blit_entity(surface, sprite, (checkpoint.body.center_x, checkpoint.body.bottom),
+                             offset)
+
+    def draw_enemy(self, surface: pygame.Surface, enemy: Enemy,
+                   offset: tuple[int, int]) -> None:
+        """Враг с кадър според вида и поведението му."""
+        frame = int(enemy.anim_time * ENEMY_FRAME_RATES.get(enemy.kind, 6))
+        if enemy.kind == "hopper":
+            frame = 1 if getattr(enemy, "airborne", False) else 0
+        elif enemy.kind == "shooter":
+            frame = 1 if getattr(enemy, "mouth_open", False) else 0
+        sprite = self.assets.enemy(enemy.kind, frame, enemy.facing, getattr(enemy, "phase", 0))
+        lift = 4 if enemy.kind == "flyer" else 1
+        self.blit_entity(surface, sprite, (enemy.body.center_x, enemy.body.bottom + lift), offset)
+
     def draw_player(self, surface: pygame.Surface, player: Player,
                     offset: tuple[int, int]) -> None:
-        """Героят с анимация според състоянието му."""
+        """Героят с анимация според състоянието му; мига, докато е неуязвим."""
+        if not blink_visible(player.invulnerable_timer):
+            return
         body = player.body
         anim = PLAYER_ANIMATIONS.get(player.state.name, "idle")
         speed_factor = 1.0 + abs(body.vx) / config.MAX_WALK_SPEED

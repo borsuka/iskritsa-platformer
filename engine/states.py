@@ -12,8 +12,10 @@ import pygame
 
 import config
 from engine.camera import Camera
-from engine.world import World
-from level.parser import load_level
+from engine.effects import Effects
+from engine.session import Session
+from engine.world import COMPLETE, LIFE_LOST, World
+from level.parser import find_level_files, load_level
 from level.validator import ensure_valid
 
 if TYPE_CHECKING:
@@ -88,8 +90,18 @@ class StateMachine:
             state.draw(surface)
 
 
+def new_session() -> Session:
+    """Нова игра с всички нива от папката levels/."""
+    return Session(level_ids=[path.stem for path in find_level_files()])
+
+
+def level_path(level_id: str) -> str:
+    """Пътят до файла на ниво по идентификатор."""
+    return str(config.LEVELS_DIR / f"{level_id}{config.LEVEL_FILE_SUFFIX}")
+
+
 class MainMenu(State):
-    """Главно меню (временна версия за етап 1)."""
+    """Главно меню (временна версия; пълното меню е в етап 9)."""
 
     OPTIONS = ("Нова игра", "Изход")
 
@@ -106,7 +118,7 @@ class MainMenu(State):
             self.selected = (self.selected + 1) % len(self.OPTIONS)
         if inp.consume("confirm"):
             if self.selected == 0:
-                self.game.states.change(Playing(self.game))
+                self.game.states.change(Playing(self.game, new_session()))
             else:
                 self.game.quit()
 
@@ -122,21 +134,41 @@ class MainMenu(State):
 
 
 class Playing(State):
-    """Игра (версия от етап 4): свят, камера и пълно рисуване."""
+    """Играта: свят, камера, ефекти, животи и възраждане.
 
-    def __init__(self, game: Game, level_path: str | None = None) -> None:
+    Args:
+        game: обектът Game.
+        session: текущата игра (животи, точки, ниво).
+    """
+
+    def __init__(self, game: Game, session: Session) -> None:
         super().__init__(game)
-        path = level_path or str(config.LEVELS_DIR / "1-1.txt")
-        level = load_level(path)
-        ensure_valid(level)
-        self.world = World(level)
+        self.session = session
+        self.level = load_level(level_path(session.level_id))
+        ensure_valid(self.level)
+        self.effects = Effects()
+        self.small_font = pygame.font.Font(None, 26)
+        self.world = self._create_world()
         self.camera = Camera(config.SCREEN_WIDTH, config.SCREEN_HEIGHT,
-                             level.pixel_width, level.pixel_height)
+                             self.level.pixel_width, self.level.pixel_height)
+        self._snap_camera()
+
+    def _create_world(self) -> World:
+        """Създава света; ако има запален чекпойнт в това ниво – започва от него."""
+        respawn = None
+        checkpoint = self.session.checkpoint
+        if checkpoint is not None and checkpoint[0] == self.level.level_id:
+            respawn = next((spawn for spawn in self.level.spawns_of("checkpoint")
+                            if (spawn.col, spawn.row) == checkpoint[1:]), None)
+        return World(self.level, self.session, respawn)
+
+    def _snap_camera(self) -> None:
+        """Центрира камерата върху героя."""
         body = self.world.player.body
         self.camera.snap_to(body.center_x, body.center_y)
 
     def update(self, dt: float) -> None:
-        """Една стъпка на света и камерата с текущия вход."""
+        """Една стъпка на света, ефектите и камерата; реакция на край на живот/ниво."""
         inp = self.game.input
         if inp.consume("debug"):
             self.game.debug = not self.game.debug
@@ -144,11 +176,55 @@ class Playing(State):
             self.game.states.change(MainMenu(self.game))
             return
         self.world.update(dt, inp.player_snapshot())
-        self.world.drain_events()
+        for event in self.world.drain_events():
+            self.effects.on_event(event.kind, event.x, event.y, event.data)
+        self.effects.update(dt)
         body = self.world.player.body
         self.camera.update(body.center_x, body.center_y, body.vx, dt)
+        self._handle_status()
+
+    def _handle_status(self) -> None:
+        """Загубен живот → възраждане или Game Over; завършено ниво → следващото."""
+        if self.world.status == LIFE_LOST:
+            if self.session.lose_life():
+                self.game.states.change(GameOver(self.game, self.session))
+                return
+            self.world = self._create_world()
+            self._snap_camera()
+        elif self.world.status == COMPLETE:
+            if self.session.has_next_level:
+                self.session.start_level(self.session.level_index + 1)
+                self.game.states.change(Playing(self.game, self.session))
+            else:
+                self.game.states.change(MainMenu(self.game))
 
     def draw(self, surface: pygame.Surface) -> None:
-        """Рисува света през камерата."""
+        """Рисува света, ефектите и временен HUD."""
         self.game.renderer.draw(surface, self.world, self.camera, self.game.debug,
                                 self.game.clock.get_fps())
+        self.effects.draw(surface, self.camera.offset, self.game.assets, self.small_font)
+        text = (f"Животи: {self.session.lives}   Точки: {self.session.score}   "
+                f"Време: {int(self.world.time_left)}")
+        surface.blit(self.small_font.render(text, True, config.HUD_TEXT), (12, 10))
+
+
+class GameOver(State):
+    """Край на играта: показва резултата; Enter връща в менюто."""
+
+    def __init__(self, game: Game, session: Session) -> None:
+        super().__init__(game)
+        self.session = session
+
+    def update(self, dt: float) -> None:
+        """Чака потвърждение."""
+        if self.game.input.consume("confirm"):
+            self.game.states.change(MainMenu(self.game))
+
+    def draw(self, surface: pygame.Surface) -> None:
+        """Надпис „Край на играта“ и резултат."""
+        surface.fill(config.BLACK)
+        center_x = config.SCREEN_WIDTH // 2
+        title = self.game.font_big.render("Край на играта", True, config.BOSS_BAR_FG)
+        surface.blit(title, title.get_rect(center=(center_x, 200)))
+        score = self.game.font.render(f"Резултат: {self.session.score}", True, config.HUD_TEXT)
+        surface.blit(score, score.get_rect(center=(center_x, 290)))

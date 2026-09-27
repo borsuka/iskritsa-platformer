@@ -64,6 +64,13 @@ class _RawLevel:
     seen_sections: set[str] = field(default_factory=set)
 
 
+def find_level_files(directory: str | Path = config.LEVELS_DIR) -> list[Path]:
+    """Всички файлове с нива в папка, подредени по име ("1-1", "1-2", "2-1"...)."""
+    return sorted(Path(directory).glob(f"*{config.LEVEL_FILE_SUFFIX}"),
+                  key=lambda path: [int(part) if part.isdigit() else part
+                                    for part in path.stem.split("-")])
+
+
 def load_level(path: str | Path) -> Level:
     """Зарежда ниво от файл.
 

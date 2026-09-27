@@ -3,24 +3,48 @@
 Светът не рисува и не пуска звуци. Когато се случи нещо интересно (скок, монета,
 удар), той записва *събитие* в `events`. Екранът `Playing` чете събитията и
 пуска звук или частици. Така логиката се тества без прозорец и без звукова карта.
+
+Ред на една стъпка:
+1. таймер на нивото;
+2. героят (вход → физика);
+3. враговете и снарядите;
+4. взаимодействия: герой↔враг, снаряд↔герой/враг, опасности, чекпойнти, изход;
+5. почистване на „мъртвите“ обекти.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+import config
 from engine.input import PlayerInput
+from engine.session import Session
+from entities.enemies import ENEMY_CLASSES, Enemy, create_enemy
+from entities.hazards import fell_into_pit, touching_hazard
+from entities.markers import Checkpoint, ExitPortal
 from entities.player import Player
-from level.level import Level
+from entities.projectiles import EnemyProjectile, Fireball
+from level.level import Level, Spawn
 from physics.body import Body
+from physics.collision import StandSurface
+
+PLAYING, LIFE_LOST, COMPLETE = "playing", "life_lost", "complete"
 
 
 @dataclass(frozen=True)
 class GameEvent:
-    """Нещо, което се е случило в света (за звук, частици и точки)."""
+    """Нещо, което се е случило в света (за звук, частици и точки).
+
+    Attributes:
+        kind: вид на събитието (напр. "jump", "coin", "enemy_stomp").
+        x: къде се е случило (X в света).
+        y: къде се е случило (Y в света).
+        data: допълнителна информация (напр. "walker:-1" или брой точки).
+    """
 
     kind: str
     x: float = 0.0
     y: float = 0.0
+    data: str = ""
 
 
 class World:
@@ -28,31 +52,166 @@ class World:
 
     Args:
         level: зареденото и валидирано ниво.
+        session: животи/точки/монети (ако няма – нова сесия, удобно за тестове).
+        respawn: откъде да започне героят (чекпойнт); по подразбиране – от `P`.
     """
 
-    def __init__(self, level: Level) -> None:
+    def __init__(self, level: Level, session: Session | None = None,
+                 respawn: Spawn | None = None) -> None:
+        level.reset()
         self.level = level
-        start = level.player_start
-        if start is None:
-            raise ValueError(f"{level.file_name}: нивото няма старт 'P'")
+        self.session = session if session is not None else Session()
+        start = respawn or level.player_start
+        if start is None or level.exit is None:
+            raise ValueError(f"{level.file_name}: нивото няма старт 'P' или изход 'X'")
         self.player = Player.at_spawn(start)
+        self.enemies: list[Enemy] = [create_enemy(spawn) for spawn in level.spawns
+                                     if spawn.kind in ENEMY_CLASSES]
+        self.enemy_projectiles: list[EnemyProjectile] = []
+        self.fireballs: list[Fireball] = []
+        self.platforms: list[StandSurface] = []
+        self.checkpoints = [Checkpoint(spawn) for spawn in level.spawns_of("checkpoint")]
+        for checkpoint in self.checkpoints:
+            checkpoint.activated = respawn is not None and checkpoint.spawn == respawn
+        self.exit = ExitPortal(level.exit)
         self.events: list[GameEvent] = []
         self.time = 0.0
+        self.time_left = float(level.meta.time_limit)
+        self.status = PLAYING
+        self.active_checkpoint = respawn
 
-    def emit(self, kind: str, x: float = 0.0, y: float = 0.0) -> None:
+    # --- събития и точки ---------------------------------------------------
+    def emit(self, kind: str, x: float = 0.0, y: float = 0.0, data: str = "") -> None:
         """Записва събитие за екрана (звук, частици)."""
-        self.events.append(GameEvent(kind, x, y))
+        self.events.append(GameEvent(kind, x, y, data))
 
     def drain_events(self) -> list[GameEvent]:
         """Връща и изчиства натрупаните събития."""
         events, self.events = self.events, []
         return events
 
+    def add_points(self, points: int, x: float, y: float) -> None:
+        """Добавя точки и показва плаващ надпис на мястото."""
+        self.session.add_points(points)
+        self.emit("points", x, y, str(points))
+
+    def add_projectile(self, projectile: EnemyProjectile) -> None:
+        """Добавя вражески снаряд."""
+        self.enemy_projectiles.append(projectile)
+
     def debug_bodies(self) -> list[Body]:
         """Всички хитбоксове – за debug режима."""
-        return [self.player.body]
+        bodies = [self.player.body, self.exit.body]
+        bodies += [entity.body for entity in (*self.enemies, *self.enemy_projectiles,
+                                               *self.fireballs, *self.checkpoints)]
+        return bodies
 
+    # --- основна стъпка ----------------------------------------------------
     def update(self, dt: float, inp: PlayerInput) -> None:
         """Една логическа стъпка на целия свят."""
+        if self.status != PLAYING:
+            return
         self.time += dt
+        self._tick_timer(dt)
         self.player.update_with_input(dt, inp, self)
+        for entity in (*self.enemies, *self.enemy_projectiles, *self.fireballs):
+            entity.update(dt, self)
+        if not self.player.is_dead:
+            self._player_vs_enemies(inp)
+            self._projectiles_vs_targets()
+            self._check_hazards()
+            self._check_checkpoints()
+            self._check_exit()
+        self._check_death_finished()
+        self._remove_dead()
+
+    def _tick_timer(self, dt: float) -> None:
+        """Обратно броене; при 0 героят губи живот."""
+        if self.player.is_dead:
+            return
+        self.time_left = max(0.0, self.time_left - dt)
+        if self.time_left <= 0:
+            self.player.die(self, "time")
+
+    # --- взаимодействия ----------------------------------------------------
+    def is_stomp(self, enemy: Enemy) -> bool:
+        """Скача ли героят ВЪРХУ врага (а не се блъска в него отстрани).
+
+        Условия: героят пада (vy > 0) и в началото на стъпката долният му ръб е
+        бил в горната част на врага (над `STOMP_TOLERANCE` от височината му).
+        """
+        player = self.player
+        threshold = enemy.body.top + enemy.body.height * config.STOMP_TOLERANCE
+        return player.body.vy > 0 and player.previous_bottom <= threshold
+
+    def _player_vs_enemies(self, inp: PlayerInput) -> None:
+        """Скок отгоре побеждава врага; страничен допир наранява героя."""
+        player = self.player
+        for enemy in self.enemies:
+            if not enemy.alive or not player.body.overlaps(enemy.body):
+                continue
+            if player.star_timer > 0:
+                enemy.defeat(self, "star")
+            elif enemy.stompable and self.is_stomp(enemy):
+                enemy.defeat(self, "stomp")
+                player.bounce(inp.jump_held)
+            else:
+                player.hurt(self, enemy.body.center_x)
+
+    def _projectiles_vs_targets(self) -> None:
+        """Вражеските снаряди нараняват героя; искровите заряди – враговете."""
+        player = self.player
+        for projectile in self.enemy_projectiles:
+            if projectile.alive and projectile.body.overlaps(player.body):
+                projectile.kill()
+                player.hurt(self, projectile.body.center_x)
+        for fireball in self.fireballs:
+            for enemy in self.enemies:
+                if fireball.alive and enemy.alive and fireball.body.overlaps(enemy.body):
+                    fireball.kill()
+                    self.emit("fireball_pop", fireball.body.center_x, fireball.body.center_y)
+                    if enemy.fireball_vulnerable:
+                        enemy.defeat(self, "fireball")
+
+    def _check_hazards(self) -> None:
+        """Шипове нараняват, лава и пропаст убиват моментално."""
+        player = self.player
+        if fell_into_pit(self.level, player.body):
+            player.die(self, "pit")
+            return
+        hazard = touching_hazard(self.level, player.body)
+        if hazard is None:
+            return
+        kind, source_x = hazard
+        if kind == "lava":
+            player.die(self, "lava")
+        else:
+            player.hurt(self, source_x)
+
+    def _check_checkpoints(self) -> None:
+        """Първото докосване запалва фенера и запомня точката на възраждане."""
+        for checkpoint in self.checkpoints:
+            if not checkpoint.activated and checkpoint.body.overlaps(self.player.body):
+                checkpoint.activated = True
+                self.active_checkpoint = checkpoint.spawn
+                spawn = checkpoint.spawn
+                self.session.checkpoint = (self.level.level_id, spawn.col, spawn.row)
+                self.emit("checkpoint", checkpoint.body.center_x, checkpoint.body.top)
+
+    def _check_exit(self) -> None:
+        """Докосване на отворения изход завършва нивото."""
+        if self.exit.is_open and self.exit.body.overlaps(self.player.body):
+            self.status = COMPLETE
+            self.emit("level_complete", self.exit.body.center_x, self.exit.body.top)
+
+    def _check_death_finished(self) -> None:
+        """След анимацията на смъртта сигнализира, че е загубен живот."""
+        player = self.player
+        if player.is_dead and player.state_time >= config.DEATH_ANIMATION_TIME:
+            self.status = LIFE_LOST
+
+    def _remove_dead(self) -> None:
+        """Маха победените врагове и изчезналите снаряди."""
+        self.enemies = [enemy for enemy in self.enemies if enemy.alive]
+        self.enemy_projectiles = [shot for shot in self.enemy_projectiles if shot.alive]
+        self.fireballs = [shot for shot in self.fireballs if shot.alive]

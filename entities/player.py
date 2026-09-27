@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import config
 from engine.input import PlayerInput
 from entities.entity import Entity
-from entities.player_states import IdleState, PlayerState
+from entities.player_states import DeadState, HurtState, IdleState, PlayerState
 from level.level import Spawn
 from physics.collision import CollisionResult, move_body
 from physics.kinematics import approach, gravity_step
@@ -38,6 +38,10 @@ class Player(Entity):
         self.jump_buffer_timer = 0.0
         self.drop_through_timer = 0.0
         self.can_cut_jump = False
+        self.invulnerable_timer = 0.0
+        self.star_timer = 0.0
+        self.previous_bottom = self.body.bottom
+        self.death_cause = ""
         self.last_collision = CollisionResult()
 
     @classmethod
@@ -52,11 +56,27 @@ class Player(Entity):
         """Една логическа стъпка: вход → скорости → движение → смяна на състояние."""
         self.anim_time += dt
         self.state_time += dt
+        self.previous_bottom = self.body.bottom
+        self.invulnerable_timer = max(0.0, self.invulnerable_timer - dt)
+        self.star_timer = max(0.0, self.star_timer - dt)
+        if self.is_dead:
+            self._fall_while_dead(dt)
+            return
         if self.state.controllable:
             self._apply_horizontal_input(inp, dt)
             self._handle_jump(inp, dt, world)
         self._move(dt, world)
         self._update_state()
+
+    @property
+    def is_dead(self) -> bool:
+        """Загинал ли е героят (тече анимацията на смъртта)."""
+        return isinstance(self.state, DeadState)
+
+    @property
+    def is_big(self) -> bool:
+        """В голяма форма ли е (издържа един удар повече)."""
+        return self.form != "small"
 
     def change_state(self, state: PlayerState) -> None:
         """Сменя състоянието и нулира таймера му."""
@@ -125,6 +145,67 @@ class Player(Entity):
         body = self.body
         dy = gravity_step(body, dt, fall_multiplier=config.FALL_GRAVITY_MULTIPLIER)
         self.last_collision = move_body(body, world.level, body.vx * dt, dy,
-                                        ignore_one_way=self.drop_through_timer > 0)
+                                        ignore_one_way=self.drop_through_timer > 0,
+                                        platforms=world.platforms)
         if self.last_collision.landed:
             self.can_cut_jump = False
+
+    def _fall_while_dead(self, dt: float) -> None:
+        """След смърт героят подскача и пада през всичко (без колизии)."""
+        if self.state_time < config.HURT_STUN_TIME:
+            return   # кратка пауза във въздуха преди падането
+        self.body.y += gravity_step(self.body, dt)
+
+    # --- щети и смърт --------------------------------------------------------
+    @property
+    def is_invulnerable(self) -> bool:
+        """Не може да бъде наранен (след удар или с Комета)."""
+        return self.invulnerable_timer > 0 or self.star_timer > 0 or self.is_dead
+
+    def hurt(self, world: World, source_x: float) -> None:
+        """Удар от враг или шипове: голямата форма става малка, малката загива.
+
+        Args:
+            world: светът.
+            source_x: откъде е дошъл ударът (за посоката на отблъскване).
+        """
+        if self.is_invulnerable:
+            return
+        if not self.is_big:
+            self.die(world, "enemy")
+            return
+        self.set_form("small")
+        self.invulnerable_timer = config.INVULNERABILITY_TIME
+        direction = 1 if self.body.center_x >= source_x else -1
+        self.body.vx = direction * config.KNOCKBACK_SPEED_X
+        self.body.vy = -config.KNOCKBACK_SPEED_Y
+        self.change_state(HurtState())
+        world.emit("hurt", self.body.center_x, self.body.center_y)
+
+    def die(self, world: World, cause: str) -> None:
+        """Героят загива: подскок нагоре и падане извън екрана.
+
+        Args:
+            world: светът.
+            cause: "enemy", "lava", "pit" или "time" (за статистика/дебъг).
+        """
+        if self.is_dead:
+            return
+        self.death_cause = cause
+        self.star_timer = 0.0
+        self.body.vx = 0.0
+        self.body.vy = -config.DEATH_HOP_VELOCITY if cause != "pit" else 0.0
+        self.change_state(DeadState())
+        world.emit("die", self.body.center_x, self.body.center_y)
+
+    def bounce(self, jump_held: bool) -> None:
+        """Отскок след скачане върху враг (по-висок, ако скокът е задържан)."""
+        speed = config.STOMP_BOUNCE_HELD_VELOCITY if jump_held else config.STOMP_BOUNCE_VELOCITY
+        self.body.vy = -speed
+        self.can_cut_jump = jump_held
+
+    def set_form(self, form: str) -> None:
+        """Сменя формата и височината на хитбокса (краката остават на място)."""
+        self.form = form
+        height = config.PLAYER_SMALL_HEIGHT if form == "small" else config.PLAYER_BIG_HEIGHT
+        self.body.resize_keep_feet(config.PLAYER_WIDTH, height)

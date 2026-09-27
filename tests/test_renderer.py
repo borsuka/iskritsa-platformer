@@ -5,13 +5,13 @@ import pygame
 
 import config
 from engine.game import Game
-from engine.states import Playing
+from engine.states import Playing, new_session
 
 
 def hitbox_corner_color(debug: bool) -> tuple[int, int, int]:
     """Рисува кадър и връща цвета на пиксела в горния ляв ъгъл на хитбокса на героя."""
     game = Game(debug=debug)
-    playing = Playing(game)
+    playing = Playing(game, new_session())
     game.start(playing)
     game.step_frame(config.FIXED_DT)
     offset_x, offset_y = playing.camera.offset
@@ -33,7 +33,7 @@ def test_normal_mode_has_no_hitboxes() -> None:
 def test_f1_toggles_debug() -> None:
     """Действието `debug` (F1) превключва режима."""
     game = Game()
-    game.start(Playing(game))
+    game.start(Playing(game, new_session()))
     game.input.handle_key(pygame.K_F1, True)
     game.step_frame(config.FIXED_DT)
     assert game.debug
