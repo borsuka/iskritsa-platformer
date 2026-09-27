@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import config
 from level.level import Level, Spawn
+from level.reachability import exit_is_reachable
 
 
 @dataclass
@@ -36,11 +37,12 @@ class LevelValidationError(Exception):
         super().__init__("\n".join(report.errors))
 
 
-def validate_level(level: Level) -> ValidationReport:
+def validate_level(level: Level, check_reachability: bool = True) -> ValidationReport:
     """Изпълнява всички проверки и връща отчет.
 
     Args:
         level: заредено ниво.
+        check_reachability: дали да се провери и достижимостта на изхода (по-бавно).
     """
     report = ValidationReport()
     _check_exactly_one(level, "player", "старт 'P'", report)
@@ -48,6 +50,8 @@ def validate_level(level: Level) -> ValidationReport:
     _check_at_most_one(level, "boss", "бос '@'", report)
     _check_not_over_pit(level, report)
     _check_crystals(level, report)
+    if report.ok and check_reachability and not exit_is_reachable(level):
+        report.errors.append(f"{level.file_name}: изходът 'X' е недостижим от старта 'P'")
     return report
 
 

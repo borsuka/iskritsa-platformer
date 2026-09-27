@@ -22,12 +22,13 @@ from entities.collectibles import Coin, Crystal, PowerUp
 from entities.enemies import ENEMY_CLASSES, Enemy, create_enemy
 from entities.hazards import fell_into_pit, touching_hazard
 from entities.markers import Checkpoint, ExitPortal
+from entities.platforms import PLATFORM_KINDS, FallingPlatform, Platform, create_platform
 from entities.player import Player
 from entities.projectiles import EnemyProjectile, Fireball
 from level import tiles
 from level.level import Level, Spawn
 from physics.body import Body
-from physics.collision import StandSurface
+from physics.collision import move_body
 
 PLAYING, LIFE_LOST, COMPLETE = "playing", "life_lost", "complete"
 
@@ -71,7 +72,8 @@ class World:
                                      if spawn.kind in ENEMY_CLASSES]
         self.enemy_projectiles: list[EnemyProjectile] = []
         self.fireballs: list[Fireball] = []
-        self.platforms: list[StandSurface] = []
+        self.platforms: list[Platform] = [create_platform(spawn) for spawn in level.spawns
+                                          if spawn.kind in PLATFORM_KINDS]
         self.coins = [Coin(spawn) for spawn in level.spawns_of("coin")]
         self.crystals = [Crystal(spawn, index)
                          for index, spawn in enumerate(level.spawns_of("crystal"))
@@ -112,7 +114,8 @@ class World:
         bodies = [self.player.body, self.exit.body]
         bodies += [entity.body for entity in (*self.enemies, *self.enemy_projectiles,
                                                *self.fireballs, *self.checkpoints, *self.coins,
-                                               *self.crystals, *self.powerups)]
+                                               *self.crystals, *self.powerups,
+                                               *self.platforms)]
         return bodies
 
     # --- основна стъпка ----------------------------------------------------
@@ -123,7 +126,13 @@ class World:
         self.time += dt
         self._tick_timer(dt)
         self._tick_block_bumps(dt)
+        for platform in self.platforms:
+            platform.update(dt, self)
+        self._carry_player()
         self.player.update_with_input(dt, inp, self)
+        standing_on = self.player.last_collision.platform
+        if isinstance(standing_on, FallingPlatform) and self.player.body.on_ground:
+            standing_on.trigger()
         if self.player.last_collision.hit_ceiling and not self.player.is_dead:
             self._hit_block_from_below()
         for entity in (*self.enemies, *self.enemy_projectiles, *self.fireballs, *self.powerups):
@@ -137,6 +146,20 @@ class World:
             self._check_exit()
         self._check_death_finished()
         self._remove_dead()
+
+    def _carry_player(self) -> None:
+        """Героят, стоящ на подвижна платформа, се мести заедно с нея.
+
+        Използваме move_body, за да не бъде „вкаран“ в стена от платформата.
+        """
+        player = self.player
+        platform = player.last_collision.platform
+        if platform is None or player.is_dead or not player.body.on_ground:
+            return
+        if not isinstance(platform, Platform) or (platform.dx == 0 and platform.dy == 0):
+            return
+        move_body(player.body, self.level, platform.dx, platform.dy, platforms=self.platforms)
+        player.body.on_ground = True
 
     def _tick_timer(self, dt: float) -> None:
         """Обратно броене; при 0 героят губи живот."""

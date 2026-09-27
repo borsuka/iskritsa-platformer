@@ -70,6 +70,12 @@ class Renderer:
                 self.draw_item(surface, item.kind, item.body, offset, frame)
         self.draw_tiles(surface, world.level, offset, frame, world.block_bumps)
         self.draw_markers(surface, world, offset, frame)
+        for platform in world.platforms:
+            sprite = self.assets.platform(platform.kind, round(platform.body.width),
+                                          world.level.meta.background)
+            shake = getattr(platform, "shake_offset", 0.0)
+            surface.blit(sprite, (round(platform.body.x + shake) - offset[0],
+                                  round(platform.body.y) - offset[1]))
         for pickup in (*world.coins, *world.crystals):
             self.draw_item(surface, pickup.kind, pickup.body, offset, frame)
         for item in world.powerups:

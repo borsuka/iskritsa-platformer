@@ -10,7 +10,7 @@ import config
 from level import tiles
 from level.level import Level
 from physics.body import Body
-from physics.tilemap_query import tiles_in_rect
+from physics.tilemap_query import TileGrid, tiles_in_rect
 
 HAZARD_HEIGHTS = {tiles.SPIKES: config.SPIKE_HITBOX_HEIGHT, tiles.LAVA: config.LAVA_HITBOX_HEIGHT}
 
@@ -22,7 +22,7 @@ def hazard_hitbox(col: int, row: int, symbol: str) -> Body:
     return Body(col * size, (row + 1) * size - height, size, height)
 
 
-def touching_hazard(level: Level, body: Body) -> tuple[str, float] | None:
+def touching_hazard(level: TileGrid, body: Body) -> tuple[str, float] | None:
     """Проверява дали тялото докосва шипове или лава.
 
     Returns:
