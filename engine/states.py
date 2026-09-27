@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 import pygame
 
 import config
+from engine.renderer import draw_tiles
+from level.parser import load_level
+from level.validator import ensure_valid
 
 if TYPE_CHECKING:
     from engine.game import Game
@@ -118,27 +121,33 @@ class MainMenu(State):
 
 
 class Playing(State):
-    """Игра (временна версия за етап 1): правоъгълник, който се движи наляво/надясно."""
+    """Игра (временна версия за етап 2): зарежда ниво и мести правоъгълник по него."""
 
-    def __init__(self, game: Game) -> None:
+    def __init__(self, game: Game, level_path: str | None = None) -> None:
         super().__init__(game)
-        self.x = config.SCREEN_WIDTH / 2
-        self.y = config.SCREEN_HEIGHT - 2 * config.TILE_SIZE - config.PLAYER_SMALL_HEIGHT
+        path = level_path or str(config.LEVELS_DIR / "1-1.txt")
+        self.level = load_level(path)
+        ensure_valid(self.level)
+        start = self.level.player_start
+        assert start is not None  # гарантирано от валидатора
+        self.x = start.x
+        self.y = start.y + config.TILE_SIZE - config.PLAYER_SMALL_HEIGHT
 
     def update(self, dt: float) -> None:
         """Мести героя с постоянна скорост, умножена по `dt`."""
         inp = self.game.input.player_snapshot()
         self.x += inp.direction * config.MAX_WALK_SPEED * dt
-        self.x = max(0.0, min(self.x, config.SCREEN_WIDTH - config.PLAYER_WIDTH))
+        self.x = max(0.0, min(self.x, self.level.pixel_width - config.PLAYER_WIDTH))
         if self.game.input.consume("pause"):
             self.game.states.change(MainMenu(self.game))
 
     def draw(self, surface: pygame.Surface) -> None:
-        """Рисува земята и героя."""
-        surface.fill(config.PALETTES["forest"]["sky_top"])
-        ground_y = config.SCREEN_HEIGHT - 2 * config.TILE_SIZE
-        pygame.draw.rect(surface, config.PALETTES["forest"]["ground"],
-                         (0, ground_y, config.SCREEN_WIDTH, 2 * config.TILE_SIZE))
+        """Рисува тайловете и героя; изгледът просто центрира героя."""
+        surface.fill(config.PALETTES[self.level.meta.background]["sky_top"])
+        max_offset = max(0, self.level.pixel_width - config.SCREEN_WIDTH)
+        offset_x = min(max(0.0, self.x - config.SCREEN_WIDTH / 2), max_offset)
+        offset_y = max(0, self.level.pixel_height - config.SCREEN_HEIGHT)
+        draw_tiles(surface, self.level, offset_x, offset_y)
         pygame.draw.rect(surface, config.HUD_ACCENT,
-                         (round(self.x), round(self.y),
+                         (round(self.x - offset_x), round(self.y - offset_y),
                           config.PLAYER_WIDTH, config.PLAYER_SMALL_HEIGHT))
