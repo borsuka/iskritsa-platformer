@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pygame
@@ -178,6 +179,8 @@ class Playing(State):
         self.world.update(dt, inp.player_snapshot())
         for event in self.world.drain_events():
             self.effects.on_event(event.kind, event.x, event.y, event.data)
+            if event.kind == "boss_land":
+                self.camera.shake()
         self.effects.update(dt)
         body = self.world.player.body
         self.camera.update(body.center_x, body.center_y, body.vx, dt)
@@ -192,11 +195,19 @@ class Playing(State):
             self.world = self._create_world()
             self._snap_camera()
         elif self.world.status == COMPLETE:
-            if self.session.has_next_level:
-                self.session.start_level(self.session.level_index + 1)
-                self.game.states.change(Playing(self.game, self.session))
-            else:
-                self.game.states.change(MainMenu(self.game))
+            self.game.states.change(LevelComplete(self.game, self.session,
+                                                  self._finish_level()))
+
+    def _finish_level(self) -> LevelStats:
+        """Добавя бонус за оставащото време и събира статистиката на нивото."""
+        seconds_left = int(self.world.time_left)
+        bonus = seconds_left * config.POINTS_PER_SECOND_LEFT
+        self.session.add_points(bonus)
+        return LevelStats(level_id=self.level.level_id, name=self.level.meta.name,
+                          score=self.session.level_score, time_bonus=bonus,
+                          time_used=self.level.meta.time_limit - self.world.time_left,
+                          crystals=len(self.session.crystals),
+                          total_crystals=len(self.level.spawns_of("crystal")))
 
     def draw(self, surface: pygame.Surface) -> None:
         """Рисува света, ефектите и временен HUD."""
@@ -206,6 +217,83 @@ class Playing(State):
         text = (f"Животи: {self.session.lives}   Точки: {self.session.score}   "
                 f"Време: {int(self.world.time_left)}")
         surface.blit(self.small_font.render(text, True, config.HUD_TEXT), (12, 10))
+
+
+@dataclass(frozen=True)
+class LevelStats:
+    """Резултатите от едно завършено ниво."""
+
+    level_id: str
+    name: str
+    score: int
+    time_bonus: int
+    time_used: float
+    crystals: int
+    total_crystals: int
+
+
+class LevelComplete(State):
+    """Екран „Нивото е завършено“: точки, бонус, кристали. Enter → следващото ниво."""
+
+    def __init__(self, game: Game, session: Session, stats: LevelStats) -> None:
+        super().__init__(game)
+        self.session = session
+        self.stats = stats
+
+    def update(self, dt: float) -> None:
+        """Enter продължава към следващото ниво или към финала."""
+        if not self.game.input.consume("confirm"):
+            return
+        if self.session.has_next_level:
+            self.session.start_level(self.session.level_index + 1)
+            self.game.states.change(Playing(self.game, self.session))
+        else:
+            self.game.states.change(Victory(self.game, self.session))
+
+    def draw(self, surface: pygame.Surface) -> None:
+        """Таблица с резултата."""
+        surface.fill(config.MENU_BG_TOP)
+        center_x = config.SCREEN_WIDTH // 2
+        stats = self.stats
+        lines = [
+            (self.game.font_big, f"Ниво {stats.level_id} е завършено!", config.HUD_ACCENT),
+            (self.game.font, stats.name, config.MENU_NORMAL),
+            (self.game.font, f"Точки в нивото: {stats.score}", config.HUD_TEXT),
+            (self.game.font, f"Бонус за време: {stats.time_bonus}", config.HUD_TEXT),
+            (self.game.font, f"Кристали: {stats.crystals} / {stats.total_crystals}",
+             config.HUD_TEXT),
+            (self.game.font, "Enter – продължи", config.MENU_SELECTED),
+        ]
+        for index, (font, text, color) in enumerate(lines):
+            label = font.render(text, True, color)
+            surface.blit(label, label.get_rect(center=(center_x, 120 + index * 60)))
+
+
+class Victory(State):
+    """Финал: Сенкоглав е победен и светлината се връща."""
+
+    def __init__(self, game: Game, session: Session) -> None:
+        super().__init__(game)
+        self.session = session
+
+    def update(self, dt: float) -> None:
+        """Enter връща в главното меню."""
+        if self.game.input.consume("confirm"):
+            self.game.states.change(MainMenu(self.game))
+
+    def draw(self, surface: pygame.Surface) -> None:
+        """Поздравителен надпис и крайният резултат."""
+        surface.fill(config.MENU_BG_BOTTOM)
+        center_x = config.SCREEN_WIDTH // 2
+        lines = [
+            (self.game.font_big, "Победа!", config.HUD_ACCENT),
+            (self.game.font, "Сенкоглав е победен и светлината се завърна.", config.HUD_TEXT),
+            (self.game.font, f"Краен резултат: {self.session.score}", config.HUD_TEXT),
+            (self.game.font, "Enter – към менюто", config.MENU_SELECTED),
+        ]
+        for index, (font, text, color) in enumerate(lines):
+            label = font.render(text, True, color)
+            surface.blit(label, label.get_rect(center=(center_x, 150 + index * 70)))
 
 
 class GameOver(State):

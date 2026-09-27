@@ -18,8 +18,9 @@ from dataclasses import dataclass
 import config
 from engine.input import PlayerInput
 from engine.session import Session
+from entities.boss import Boss
 from entities.collectibles import Coin, Crystal, PowerUp
-from entities.enemies import ENEMY_CLASSES, Enemy, create_enemy
+from entities.enemies import ENEMY_CLASSES, Enemy
 from entities.hazards import fell_into_pit, touching_hazard
 from entities.markers import Checkpoint, ExitPortal
 from entities.platforms import PLATFORM_KINDS, FallingPlatform, Platform, create_platform
@@ -31,6 +32,9 @@ from physics.body import Body
 from physics.collision import move_body
 
 PLAYING, LIFE_LOST, COMPLETE = "playing", "life_lost", "complete"
+
+#: Вид → клас на врага (босът е в отделен модул, затова го добавяме тук).
+ENEMY_FACTORY: dict[str, type[Enemy]] = {**ENEMY_CLASSES, "boss": Boss}
 
 
 @dataclass(frozen=True)
@@ -68,8 +72,9 @@ class World:
         if start is None or level.exit is None:
             raise ValueError(f"{level.file_name}: нивото няма старт 'P' или изход 'X'")
         self.player = Player.at_spawn(start)
-        self.enemies: list[Enemy] = [create_enemy(spawn) for spawn in level.spawns
-                                     if spawn.kind in ENEMY_CLASSES]
+        self.enemies: list[Enemy] = [ENEMY_FACTORY[spawn.kind].at_spawn(spawn)
+                                     for spawn in level.spawns if spawn.kind in ENEMY_FACTORY]
+        self.boss = next((enemy for enemy in self.enemies if isinstance(enemy, Boss)), None)
         self.enemy_projectiles: list[EnemyProjectile] = []
         self.fireballs: list[Fireball] = []
         self.platforms: list[Platform] = [create_platform(spawn) for spawn in level.spawns
@@ -84,6 +89,7 @@ class World:
         for checkpoint in self.checkpoints:
             checkpoint.activated = respawn is not None and checkpoint.spawn == respawn
         self.exit = ExitPortal(level.exit)
+        self.exit.is_open = self.boss is None
         self.events: list[GameEvent] = []
         self.time = 0.0
         self.time_left = float(level.meta.time_limit)
@@ -187,11 +193,11 @@ class World:
             if not enemy.alive or not player.body.overlaps(enemy.body):
                 continue
             if player.star_timer > 0:
-                enemy.defeat(self, "star")
+                enemy.star_touch(self)
             elif enemy.stompable and self.is_stomp(enemy):
-                enemy.defeat(self, "stomp")
+                enemy.stomped(self)
                 player.bounce(inp.jump_held)
-            else:
+            elif enemy.harmful:
                 player.hurt(self, enemy.body.center_x)
 
     def _projectiles_vs_targets(self) -> None:
@@ -315,7 +321,10 @@ class World:
                 self.emit("checkpoint", checkpoint.body.center_x, checkpoint.body.top)
 
     def _check_exit(self) -> None:
-        """Докосване на отворения изход завършва нивото."""
+        """Отваря изхода след победа над боса; докосване на отворения изход завършва нивото."""
+        if not self.exit.is_open and self.boss is not None and not self.boss.alive:
+            self.exit.is_open = True
+            self.emit("exit_open", self.exit.body.center_x, self.exit.body.top)
         if self.exit.is_open and self.exit.body.overlaps(self.player.body):
             self.status = COMPLETE
             self.emit("level_complete", self.exit.body.center_x, self.exit.body.top)

@@ -85,6 +85,19 @@ class Enemy(Entity):
                                         platforms=world.platforms)
         return self.last_collision
 
+    @property
+    def harmful(self) -> bool:
+        """Наранява ли героя при страничен допир."""
+        return True
+
+    def stomped(self, world: World) -> None:
+        """Героят е скочил отгоре (босът заменя това поведение)."""
+        self.defeat(world, "stomp")
+
+    def star_touch(self, world: World) -> None:
+        """Героят с Комета го е докоснал."""
+        self.defeat(world, "star")
+
     def defeat(self, world: World, how: str) -> None:
         """Врагът е победен: дава точки и изчезва (визуалният ефект е в Playing).
 
@@ -253,8 +266,3 @@ ENEMY_CLASSES: dict[str, type[Enemy]] = {
     "flyer": Flyer,
     "shooter": Shooter,
 }
-
-
-def create_enemy(spawn: Spawn) -> Enemy:
-    """Фабрика: създава правилния враг според вида на spawn-а."""
-    return ENEMY_CLASSES[spawn.kind].at_spawn(spawn)
