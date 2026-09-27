@@ -55,9 +55,9 @@ def validate_level(level: Level, check_reachability: bool = True) -> ValidationR
     return report
 
 
-def ensure_valid(level: Level) -> None:
+def ensure_valid(level: Level, check_reachability: bool = True) -> None:
     """Вдига `LevelValidationError`, ако нивото има грешки."""
-    report = validate_level(level)
+    report = validate_level(level, check_reachability)
     if not report.ok:
         raise LevelValidationError(report)
 
@@ -119,3 +119,34 @@ def _check_crystals(level: Level, report: ValidationReport) -> None:
         report.warnings.append(
             f"{level.file_name}: {count} кристала "
             f"(очакват се {config.CRYSTALS_PER_LEVEL})")
+
+
+def main(paths: list[str]) -> int:
+    """Инструмент за авторите на нива: `python -m level.validator levels/*.txt`.
+
+    Отпечатва грешките и предупрежденията за всеки файл. Връща 0, ако всички
+    нива са валидни, иначе 1 (удобно за автоматични проверки).
+    """
+    from level.parser import LevelFormatError, find_level_files, load_level
+
+    files = paths or [str(path) for path in find_level_files()]
+    all_ok = True
+    for path in files:
+        try:
+            report = validate_level(load_level(path))
+        except LevelFormatError as error:
+            print(f"ГРЕШКА  {error}")
+            all_ok = False
+            continue
+        status = "OK     " if report.ok else "ГРЕШКА "
+        print(f"{status}{path}")
+        for message in report.errors + [f"(предупреждение) {w}" for w in report.warnings]:
+            print(f"        {message}")
+        all_ok = all_ok and report.ok
+    return 0 if all_ok else 1
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main(sys.argv[1:]))

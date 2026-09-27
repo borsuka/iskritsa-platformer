@@ -19,7 +19,7 @@ class LevelMeta:
 
     name: str = "Безименно ниво"
     world: int = 1
-    time_limit: int = 300
+    time_limit: int = config.DEFAULT_TIME_LIMIT
     background: str = config.DEFAULT_BACKGROUND
     music: str = "none"
 

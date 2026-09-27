@@ -24,8 +24,7 @@ from engine.camera import Camera
 from engine.effects import Effects
 from engine.session import Session
 from engine.world import COMPLETE, LIFE_LOST, World
-from level.parser import load_level
-from level.validator import ensure_valid
+from level.parser import level_file, load_level
 from ui.hud import draw_text
 from ui.menus import Menu, MenuItem
 
@@ -101,11 +100,6 @@ class StateMachine:
             first -= 1
         for state in self._stack[first:]:
             state.draw(surface)
-
-
-def level_path(level_id: str) -> str:
-    """Пътят до файла на ниво по идентификатор."""
-    return str(config.LEVELS_DIR / f"{level_id}{config.LEVEL_FILE_SUFFIX}")
 
 
 def format_time(seconds: float | None) -> str:
@@ -196,7 +190,7 @@ class LevelSelect(MenuState):
         """Ред за всяко ниво с рекорда му + „Назад“."""
         items = []
         for level_id in self.game.level_ids:
-            level = load_level(level_path(level_id))
+            level = load_level(level_file(level_id))
             unlocked = self.game.progress.is_unlocked(level_id)
             items.append(MenuItem(f"{level_id}  {level.meta.name}",
                                   lambda lid=level_id: self.start(lid), unlocked,
@@ -287,8 +281,7 @@ class Playing(State):
     def __init__(self, game: Game, session: Session) -> None:
         super().__init__(game)
         self.session = session
-        self.level = load_level(level_path(session.level_id))
-        ensure_valid(self.level)
+        self.level = game.get_level(session.level_id)
         self.effects = Effects()
         self.world = self._create_world()
         self.camera = Camera(config.SCREEN_WIDTH, config.SCREEN_HEIGHT,

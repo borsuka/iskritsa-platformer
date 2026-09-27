@@ -19,8 +19,10 @@ from engine.input import InputHandler
 from engine.renderer import Renderer
 from engine.states import MainMenu, State, StateMachine
 from engine.timestep import FixedTimestep
-from level.parser import find_level_files
+from level.level import Level
+from level.parser import find_level_files, level_file, load_level
 from level.progress import load_progress, save_progress
+from level.validator import ensure_valid
 from ui.hud import Hud
 from ui.menus import MenuBackground
 from ui.transitions import Fade
@@ -56,6 +58,7 @@ class Game:
         self.states = StateMachine()
         self.fade = Fade()
         self.level_ids = [path.stem for path in find_level_files()]
+        self._levels: dict[str, Level] = {}
         self.save_path = save_path or config.SAVE_PATH
         self.progress = load_progress(self.save_path, self.level_ids)
         self.debug = debug
@@ -65,6 +68,22 @@ class Game:
     def start(self, state: State | None = None) -> None:
         """Задава първия екран (по подразбиране – главното меню)."""
         self.states.change(state if state is not None else MainMenu(self))
+
+    def get_level(self, level_id: str) -> Level:
+        """Зарежда и валидира ниво само веднъж; после го връща от кеша.
+
+        В играта се правят само бързите проверки (старт, изход, пропасти).
+        Проверката за достижимост отнема 1–2 секунди, затова се пуска от тестовете
+        и от инструмента `python -m level.validator` при създаване на ниво.
+
+        Raises:
+            LevelFormatError, LevelValidationError: ако нивото е невалидно.
+        """
+        if level_id not in self._levels:
+            level = load_level(level_file(level_id))
+            ensure_valid(level, check_reachability=False)
+            self._levels[level_id] = level
+        return self._levels[level_id]
 
     def change_state(self, state: State, fade: bool = True) -> None:
         """Сменя екрана – по подразбиране с плавно затъмняване."""

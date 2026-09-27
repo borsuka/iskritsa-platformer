@@ -467,9 +467,9 @@ def draw_surprise_tile(background: str, frame: int) -> pygame.Surface:
     center = (TILE // 2, TILE // 2)
     pygame.draw.circle(surface, rune, center, 5)
     for angle in range(0, 360, 90):
-        rad = math.radians(angle + 45)
-        pygame.draw.line(surface, rune, (center[0] + math.cos(rad) * 7, center[1] + math.sin(rad) * 7),
-                         (center[0] + math.cos(rad) * 11, center[1] + math.sin(rad) * 11), 2)
+        dx, dy = math.cos(math.radians(angle + 45)), math.sin(math.radians(angle + 45))
+        pygame.draw.line(surface, rune, (center[0] + dx * 7, center[1] + dy * 7),
+                         (center[0] + dx * 11, center[1] + dy * 11), 2)
     for corner in ((4, 4), (TILE - 5, 4), (4, TILE - 5), (TILE - 5, TILE - 5)):
         pygame.draw.circle(surface, shade(stone, 0.6), corner, 1)
     return surface
@@ -556,7 +556,8 @@ def _paint_hills(layer: pygame.Surface, color: Color, rng: random.Random) -> Non
     height = layer.get_height()
     points = [(0, height)]
     for x in range(0, LAYER_WIDTH + 1, 8):
-        wave = math.sin(x / LAYER_WIDTH * math.pi * 4) * 30 + math.sin(x / LAYER_WIDTH * math.pi * 10) * 12
+        angle = x / LAYER_WIDTH * math.pi
+        wave = math.sin(angle * 4) * 30 + math.sin(angle * 10) * 12
         points.append((x, height * 0.55 + wave))
     points.append((LAYER_WIDTH, height))
     pygame.draw.polygon(layer, color, points)
@@ -570,11 +571,12 @@ def _paint_pines(layer: pygame.Surface, color: Color, rng: random.Random) -> Non
         base = height * 0.78 + rng.uniform(-10, 20)
 
         def tree(px: float, s: float = size, b: float = base) -> None:
+            """Ствол и три етажа клони."""
             pygame.draw.rect(layer, shade(color, 0.7), (px - 3, b - 4, 6, height - b + 4))
             for tier in range(3):
                 top = b - s * (0.5 + tier * 0.3)
-                pygame.draw.polygon(layer, color, [(px - s / 2.5 + tier * 4, b - tier * s * 0.28),
-                                                   (px, top), (px + s / 2.5 - tier * 4, b - tier * s * 0.28)])
+                half, y = s / 2.5 - tier * 4, b - tier * s * 0.28
+                pygame.draw.polygon(layer, color, [(px - half, y), (px, top), (px + half, y)])
         _wrap_x(layer, x, tree)
     pygame.draw.rect(layer, color, (0, height * 0.86, LAYER_WIDTH, height))
 
@@ -586,6 +588,8 @@ def _paint_bushes(layer: pygame.Surface, color: Color, rng: random.Random) -> No
         x, radius = rng.uniform(0, LAYER_WIDTH), rng.uniform(18, 34)
 
         def bush(px: float, r: float = radius) -> None:
+
+            """Три припокриващи се кръга."""
             for dx in (-r * 0.8, 0, r * 0.8):
                 pygame.draw.circle(layer, color, (px + dx, height - r * 0.4), r * 0.75)
         _wrap_x(layer, x, bush)
@@ -598,6 +602,8 @@ def _paint_stalactites(layer: pygame.Surface, color: Color, rng: random.Random) 
         x, length, width = rng.uniform(0, LAYER_WIDTH), rng.uniform(60, 180), rng.uniform(20, 50)
 
         def spike(px: float, ln: float = length, w: float = width) -> None:
+
+            """Сталактит отгоре и сталагмит отдолу."""
             pygame.draw.polygon(layer, color, [(px - w / 2, 0), (px, ln), (px + w / 2, 0)])
             pygame.draw.polygon(layer, color, [(px - w / 2, height), (px + 7, height - ln * 0.8),
                                                (px + w / 2, height)])
@@ -611,6 +617,8 @@ def _paint_pillars(layer: pygame.Surface, color: Color, rng: random.Random) -> N
         x, width = rng.uniform(0, LAYER_WIDTH), rng.uniform(30, 60)
 
         def pillar(px: float, w: float = width) -> None:
+
+            """Колона с капител."""
             pygame.draw.rect(layer, color, (px, height * 0.25, w, height))
             pygame.draw.rect(layer, shade(color, 1.2), (px - 6, height * 0.25, w + 12, 12))
             pygame.draw.line(layer, shade(color, 0.8), (px + w * 0.3, height * 0.3),
@@ -626,6 +634,8 @@ def _paint_crystals(layer: pygame.Surface, color: Color, rng: random.Random) -> 
         x, size = rng.uniform(0, LAYER_WIDTH), rng.uniform(20, 45)
 
         def crystal(px: float, s: float = size) -> None:
+
+            """Кристал с проблясък."""
             pygame.draw.polygon(layer, color, [(px - s / 3, height), (px, height - s * 1.6),
                                                (px + s / 3, height)])
             pygame.draw.line(layer, (*glow_color, 140), (px, height - s * 1.5), (px, height), 2)
@@ -650,6 +660,8 @@ def _paint_towers(layer: pygame.Surface, color: Color, rng: random.Random) -> No
         x, width, top = rng.uniform(0, LAYER_WIDTH), rng.uniform(50, 90), rng.uniform(0.3, 0.55)
 
         def tower(px: float, w: float = width, t: float = top) -> None:
+
+            """Кула с бойници и прозорче."""
             y = height * t
             pygame.draw.rect(layer, color, (px, y, w, height - y))
             for merlon in range(0, round(w), 16):
@@ -661,12 +673,23 @@ def _paint_towers(layer: pygame.Surface, color: Color, rng: random.Random) -> No
 # ---------------------------------------------------------------------------
 # Кеш
 # ---------------------------------------------------------------------------
+def optimize(surface: pygame.Surface) -> pygame.Surface:
+    """Превръща повърхността във формата на екрана – blit-ът става в пъти по-бърз.
+
+    Възможно е само след `pygame.display.set_mode`; иначе връща същата повърхност.
+    """
+    if pygame.display.get_surface() is None:
+        return surface
+    if surface.get_flags() & pygame.SRCALPHA:
+        return surface.convert_alpha()
+    return surface.convert()
 class Assets:
     """Кешира генерираните спрайтове, за да се рисуват само веднъж."""
 
     def __init__(self) -> None:
         self._cache: dict[tuple, pygame.Surface] = {}
-        self._backgrounds: dict[str, tuple[pygame.Surface, list[pygame.Surface]]] = {}
+        self._backgrounds: dict[str, tuple[pygame.Surface,
+                                           list[tuple[pygame.Surface, int]]]] = {}
 
     def _get(self, key: tuple, factory: Callable[[], pygame.Surface],
              facing: int = 1) -> pygame.Surface:
@@ -676,7 +699,7 @@ class Assets:
             if facing < 0:
                 self._cache[full_key] = pygame.transform.flip(self._get(key, factory), True, False)
             else:
-                self._cache[full_key] = factory()
+                self._cache[full_key] = optimize(factory())
         return self._cache[full_key]
 
     def player(self, form: str, anim: str, frame: int, facing: int) -> pygame.Surface:
@@ -751,11 +774,24 @@ class Assets:
         }
         return self._get(("tile", symbol, background), simple[symbol])
 
-    def background(self, background: str) -> tuple[pygame.Surface, list[pygame.Surface]]:
-        """Небе (градиент с размера на екрана) и трите паралакс слоя."""
+    def background(self, background: str) -> tuple[pygame.Surface,
+                                                    list[tuple[pygame.Surface, int]]]:
+        """Небе (градиент с размера на екрана) и трите паралакс слоя.
+
+        Всеки слой е изрязан до частта, в която реално има рисунка (напр. само
+        долната половина за хълмовете) – така се рисуват много по-малко пиксели.
+
+        Returns:
+            (небе, [(слой, отместване по Y), ...]).
+        """
         if background not in self._backgrounds:
             palette = config.PALETTES[background]
             sky = vertical_gradient(config.SCREEN_WIDTH, config.SCREEN_HEIGHT,
                                     palette["sky_top"], palette["sky_bottom"])
-            self._backgrounds[background] = (sky, draw_background_layers(background))
+            layers = []
+            for layer in draw_background_layers(background):
+                bounds = layer.get_bounding_rect()
+                strip = layer.subsurface((0, bounds.top, LAYER_WIDTH, bounds.height)).copy()
+                layers.append((optimize(strip), bounds.top))
+            self._backgrounds[background] = (optimize(sky), layers)
         return self._backgrounds[background]

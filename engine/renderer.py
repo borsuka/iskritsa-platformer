@@ -100,12 +100,12 @@ class Renderer:
         """
         sky, layers = self.assets.background(background)
         surface.blit(sky, (0, 0))
-        for layer, factor in zip(layers, config.PARALLAX_FACTORS):
+        for (layer, top), factor in zip(layers, config.PARALLAX_FACTORS):
             shift = (camera.x * factor) % LAYER_WIDTH
-            y = -camera.y * factor * 0.5
+            y = round(top - camera.y * factor * 0.5)
             x = -shift
             while x < surface.get_width():
-                surface.blit(layer, (round(x), round(y)))
+                surface.blit(layer, (round(x), y))
                 x += LAYER_WIDTH
 
     # --- тайлове -----------------------------------------------------------
@@ -119,6 +119,7 @@ class Renderer:
         last_col = min(level.width - 1, (off_x + surface.get_width()) // size)
         last_row = min(level.height - 1, (off_y + surface.get_height()) // size)
         background = level.meta.background
+        batch: list[tuple[pygame.Surface, tuple[int, int]]] = []
         for row in range(first_row, last_row + 1):
             for col in range(first_col, last_col + 1):
                 symbol = level.symbol_at(col, row)
@@ -129,7 +130,8 @@ class Renderer:
                 sprite = self.assets.tile(symbol, background, top_exposed, frame, col)
                 if sprite is not None:
                     lift = bump_lift(bumps.get((col, row), 0.0))
-                    surface.blit(sprite, (col * size - off_x, row * size - off_y - lift))
+                    batch.append((sprite, (col * size - off_x, row * size - off_y - lift)))
+        surface.fblits(batch)   # един пакетен blit – много по-бързо от стотици отделни
 
     # --- обекти ------------------------------------------------------------
     def blit_entity(self, surface: pygame.Surface, sprite: pygame.Surface,

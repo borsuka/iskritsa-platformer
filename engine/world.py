@@ -260,10 +260,12 @@ class World:
 
     def _defeat_enemies_on_block(self, col: int, row: int) -> None:
         """Враг, стоящ върху ударения блок, отлита (класически трик)."""
-        left, right, top = col * config.TILE_SIZE, (col + 1) * config.TILE_SIZE, row * config.TILE_SIZE
+        size = config.TILE_SIZE
+        left, right, top = col * size, (col + 1) * size, row * size
         for enemy in self.enemies:
             body = enemy.body
-            if body.left < right and body.right > left and abs(body.bottom - top) < 2:
+            standing_on_block = abs(body.bottom - top) < config.SUPPORT_TOLERANCE
+            if body.left < right and body.right > left and standing_on_block:
                 enemy.defeat(self, "fireball")
 
     # --- предмети ------------------------------------------------------------

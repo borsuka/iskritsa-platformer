@@ -17,7 +17,8 @@ class Checkpoint(Entity):
     kind = "checkpoint"
 
     def __init__(self, spawn: Spawn) -> None:
-        super().__init__(spawn.x, spawn.y - 2 * T, T, 3 * T)
+        height = config.CHECKPOINT_HEIGHT_TILES * T
+        super().__init__(spawn.x, spawn.y + T - height, T, height)
         self.spawn = spawn
         self.activated = False
 
@@ -28,6 +29,8 @@ class ExitPortal(Entity):
     kind = "exit"
 
     def __init__(self, spawn: Spawn) -> None:
-        super().__init__(spawn.x + 4, spawn.y - T, T - 8, 2 * T)
+        height = config.EXIT_HEIGHT_TILES * T
+        inset = config.EXIT_INSET
+        super().__init__(spawn.x + inset, spawn.y + T - height, T - 2 * inset, height)
         self.spawn = spawn
         self.is_open = True

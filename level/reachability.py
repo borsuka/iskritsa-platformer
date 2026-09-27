@@ -44,6 +44,7 @@ T = config.TILE_SIZE
 Cell = tuple[int, int]
 MAX_SIMULATION_STEPS = 180          # 3 секунди полет – повече не е нужно
 CUT_JUMP_TIME = 0.12                # s, кога „пускаме“ бутона при нисък скок
+MAX_RUN_UP_TILES = 20               # по-дълго засилване не променя скоростта
 ONE_WAY = tiles.TILE_TYPES[tiles.ONE_WAY]
 
 
@@ -154,7 +155,7 @@ def _run_up_speed(grid: ReachGrid, cell: Cell, profile: JumpProfile) -> float:
         return 0.0
     col, row = cell
     run_up = 1
-    while run_up < 20 and grid.is_stand_cell((col - profile.direction * run_up, row)):
+    while run_up < MAX_RUN_UP_TILES and grid.is_stand_cell((col - profile.direction * run_up, row)):
         run_up += 1
     speed = math.sqrt(2 * config.GROUND_ACCELERATION * run_up * T)
     return profile.direction * min(speed, profile.target_speed)

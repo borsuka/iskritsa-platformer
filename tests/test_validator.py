@@ -72,3 +72,17 @@ def test_ensure_valid_raises() -> None:
     """ensure_valid вдига изключение при грешки."""
     with pytest.raises(LevelValidationError):
         ensure_valid(make("....\n####\n"))
+
+
+def test_validator_cli_reports_ok_and_errors(tmp_path, capsys) -> None:
+    """Инструментът `python -m level.validator` отпечатва резултат и код за изход."""
+    from level.validator import main
+
+    good = tmp_path / "good.txt"
+    good.write_text("[map]\nP...X\n#####\n", encoding="utf-8")
+    bad = tmp_path / "bad.txt"
+    bad.write_text("[map]\nP...\n####\n", encoding="utf-8")
+    assert main([str(good)]) == 0
+    assert main([str(good), str(bad)]) == 1
+    output = capsys.readouterr().out
+    assert "OK" in output and "липсва изход" in output

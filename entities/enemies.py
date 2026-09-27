@@ -138,7 +138,8 @@ class Walker(Enemy):
         if world.level.tile_at(col, row).supports_standing:
             return True
         return any(platform.left <= front_x <= platform.right
-                   and abs(platform.top - self.body.bottom) < 2 for platform in world.platforms)
+                   and abs(platform.top - self.body.bottom) < config.SUPPORT_TOLERANCE
+                   for platform in world.platforms)
 
 
 class Hopper(Enemy):
@@ -249,7 +250,8 @@ class Shooter(Enemy):
         self.since_shot = 0.0
         length = math.hypot(dx, dy) or 1.0
         speed = config.ENEMY_PROJECTILE_SPEED
-        projectile = EnemyProjectile(self.body.center_x, self.body.top + 8,
+        projectile = EnemyProjectile(self.body.center_x,
+                                     self.body.top + config.SHOOTER_MUZZLE_OFFSET,
                                      dx / length * speed, dy / length * speed, "thorn")
         world.add_projectile(projectile)
         world.emit("enemy_shoot", self.body.center_x, self.body.top)
